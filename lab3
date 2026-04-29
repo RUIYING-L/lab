@@ -1,0 +1,174 @@
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from scipy import stats
+from scipy.stats import tukey_hsd
+import warnings
+warnings.filterwarnings('ignore')
+
+# =============================================================================
+# Lab 3 – ANOVA Analysis on World Energy Dataset
+# Dataset: WorldEnergy.csv (Our World in Data – Energy)
+# =============================================================================
+
+# ── 1. Load Data ──────────────────────────────────────────────────────────────
+df = pd.read_csv('WorldEnergy.csv')
+
+# ── 2. Data Selection & Preprocessing ────────────────────────────────────────
+# Select 5 representative countries spanning different income/region groups
+# and years 2000–2022 (modern energy transition era)
+countries = ['United States', 'China', 'India', 'Germany', 'Brazil']
+data = df[
+    (df['country'].isin(countries)) &
+    (df['year'] >= 2000) &
+    (df['year'] <= 2022)
+][['country', 'year', 'renewables_share_energy', 'fossil_share_energy']].dropna()
+
+print("=" * 60)
+print("  Lab 3 – One-Way ANOVA: Renewable Energy Share by Country")
+print("=" * 60)
+
+# ── 3. Descriptive Statistics ────────────────────────────────────────────────
+print("\n[1] Descriptive Statistics – Renewable Energy Share (%):")
+print("-" * 60)
+desc = data.groupby('country')['renewables_share_energy'].describe()
+print(desc.round(3))
+
+# ── 4. Hypothesis Testing – One-Way ANOVA ────────────────────────────────────
+print("\n[2] One-Way ANOVA")
+print("-" * 60)
+print("H0: All country means of renewable energy share are equal")
+print("HA: At least one country mean differs significantly")
+print()
+
+groups = [grp['renewables_share_energy'].values
+          for _, grp in data.groupby('country')]
+
+f_stat, p_value = stats.f_oneway(*groups)
+
+k  = len(countries)          # number of groups
+N  = sum(len(g) for g in groups)  # total observations
+grand_mean = np.mean(np.concatenate(groups))
+
+ss_between = sum(len(g) * (np.mean(g) - grand_mean) ** 2 for g in groups)
+ss_within  = sum(((g - np.mean(g)) ** 2).sum() for g in groups)
+df_between = k - 1
+df_within  = N - k
+ms_between = ss_between / df_between
+ms_within  = ss_within  / df_within
+
+print(f"  Number of groups (k)   : {k}")
+print(f"  Total observations (N) : {N}")
+print(f"  SS Between             : {ss_between:.4f}")
+print(f"  SS Within              : {ss_within:.4f}")
+print(f"  df Between             : {df_between}")
+print(f"  df Within              : {df_within}")
+print(f"  MS Between             : {ms_between:.4f}")
+print(f"  MS Within              : {ms_within:.4f}")
+print(f"  F-statistic            : {f_stat:.4f}")
+print(f"  p-value                : {p_value:.2e}")
+print()
+
+alpha = 0.05
+if p_value < alpha:
+    print(f"  Decision: p < {alpha} → REJECT H0")
+    print("  Conclusion: There is a statistically significant difference in")
+    print("  renewable energy share across the five countries.")
+else:
+    print(f"  Decision: p >= {alpha} → FAIL TO REJECT H0")
+
+# ── 5. Post-hoc – Tukey HSD ──────────────────────────────────────────────────
+print("\n[3] Post-hoc Analysis – Tukey HSD (α = 0.05):")
+print("-" * 60)
+labels = sorted(data['country'].unique())
+tukey = tukey_hsd(*groups)
+print(f"  {'Country A':<20} {'Country B':<20} {'p-value':>10}  {'Significant?':>12}")
+print("  " + "-" * 68)
+for i in range(len(labels)):
+    for j in range(i + 1, len(labels)):
+        pv = tukey.pvalue[i, j]
+        sig = "Yes *" if pv < alpha else "No"
+        print(f"  {labels[i]:<20} {labels[j]:<20} {pv:>10.4f}  {sig:>12}")
+
+# ── 6. Visualisation ─────────────────────────────────────────────────────────
+colors = ['#2196F3', '#F44336', '#FF9800', '#4CAF50', '#9C27B0']
+country_order = sorted(countries)
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig.suptitle(
+    'Lab 3 – ANOVA: Renewable Energy Share by Country (2000–2022)',
+    fontsize=14, fontweight='bold')
+
+# (a) Boxplot
+ax = axes[0, 0]
+bp = ax.boxplot([data[data['country'] == c]['renewables_share_energy'].values
+                 for c in country_order],
+                patch_artist=True, labels=country_order)
+for patch, col in zip(bp['boxes'], colors):
+    patch.set_facecolor(col); patch.set_alpha(0.7)
+ax.set_title('(a) Distribution of Renewable Energy Share')
+ax.set_ylabel('Renewable Energy Share (%)')
+ax.set_xticklabels(country_order, rotation=15, ha='right')
+ax.grid(axis='y', alpha=0.3)
+
+# (b) Time series
+ax = axes[0, 1]
+for i, c in enumerate(country_order):
+    sub = data[data['country'] == c].sort_values('year')
+    ax.plot(sub['year'], sub['renewables_share_energy'],
+            label=c, color=colors[i], linewidth=2, marker='o', markersize=3)
+ax.set_title('(b) Renewable Energy Share Over Time')
+ax.set_ylabel('Renewable Energy Share (%)')
+ax.set_xlabel('Year')
+ax.legend(fontsize=8); ax.grid(alpha=0.3)
+
+# (c) Bar chart with error bars
+ax = axes[1, 0]
+means = data.groupby('country')['renewables_share_energy'].mean()
+stds  = data.groupby('country')['renewables_share_energy'].std()
+bars = ax.bar(country_order, [means[c] for c in country_order],
+              color=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+ax.errorbar(country_order, [means[c] for c in country_order],
+            yerr=[stds[c] for c in country_order],
+            fmt='none', color='black', capsize=5)
+ax.set_title('(c) Mean Renewable Energy Share (±SD)')
+ax.set_ylabel('Mean Renewable Energy Share (%)')
+ax.set_xticklabels(country_order, rotation=15, ha='right')
+ax.grid(axis='y', alpha=0.3)
+for bar, c in zip(bars, country_order):
+    ax.text(bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            f'{means[c]:.1f}%', ha='center', va='bottom', fontsize=9)
+
+# (d) ANOVA table
+ax = axes[1, 1]
+ax.axis('off')
+tdata = [['Between Groups', f'{ss_between:.2f}', str(df_between),
+          f'{ms_between:.2f}', f'{f_stat:.2f}', f'{p_value:.2e}'],
+         ['Within Groups',  f'{ss_within:.2f}',  str(df_within),
+          f'{ms_within:.2f}', '', ''],
+         ['Total', f'{ss_between+ss_within:.2f}', str(N-1), '', '', '']]
+table = ax.table(cellText=tdata,
+                 colLabels=['Source','SS','df','MS','F','p-value'],
+                 cellLoc='center', loc='center', bbox=[0, 0.3, 1, 0.6])
+table.auto_set_font_size(False); table.set_fontsize(9)
+for (r, c_), cell in table.get_celld().items():
+    if r == 0:
+        cell.set_facecolor('#1565C0'); cell.set_text_props(color='white', fontweight='bold')
+    elif r == 1: cell.set_facecolor('#FFCDD2')
+    elif r == 2: cell.set_facecolor('#E3F2FD')
+    else:        cell.set_facecolor('#F5F5F5')
+ax.set_title('(d) One-Way ANOVA Summary Table', fontweight='bold', pad=80)
+ax.text(0.5, 0.1,
+        f'F({df_between},{df_within}) = {f_stat:.2f},  p < 0.001\n'
+        '→ Reject H₀ at α = 0.05\n'
+        '→ At least one country differs significantly',
+        ha='center', va='center', transform=ax.transAxes, fontsize=10,
+        bbox=dict(boxstyle='round', facecolor='#E8F5E9',
+                  edgecolor='#2E7D32', linewidth=2))
+
+plt.tight_layout()
+plt.savefig('Lab3_ANOVA_Results.png', dpi=150, bbox_inches='tight')
+print("\nFigure saved as Lab3_ANOVA_Results.png")
+print("\n[Done]")
